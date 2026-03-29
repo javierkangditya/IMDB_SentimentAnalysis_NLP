@@ -5,7 +5,8 @@ This project analyzes movie reviews from the IMDb dataset and builds a machine l
 
 ## Folder Structure
 - `Data/Raw` : original IMDb dataset  
-- `Data/Processed` : cleaned and tokenized text data  
+- `Data/Processed` : cleaned and tokenized text data
+(Dataset is not included due to size. Please download from Kaggle.)
 - `Notebooks` : R Markdown notebook documenting the full workflow  
 - `Scripts` : modular R scripts for each pipeline step  
 - `Outputs/Figures` : visualizations from EDA and insights  
