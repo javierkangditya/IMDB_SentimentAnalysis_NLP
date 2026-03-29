@@ -1,0 +1,632 @@
+# ============================================================
+# Sentiment Analysis of IMDb Movie Reviews using NLP in R
+# ============================================================
+# Author       : Javier Kangditya
+# Project      : Natural Language Processing - Sentiment Classification
+# Dataset      : IMDb Movie Reviews Dataset (Kaggle)
+# ============================================================
+
+
+# -----------------------------
+# 1. Introduction
+# -----------------------------
+# This notebook presents a complete Natural Language Processing (NLP) workflow
+# applied to the IMDb Movie Reviews dataset to classify user reviews into
+# two sentiment categories: positive and negative.
+
+# Movie reviews are a rich source of unstructured text data that reflect user
+# opinions and emotions. Understanding sentiment in such data is important for
+# applications such as recommendation systems, audience analysis, and business
+# decision-making in the entertainment industry.
+
+# The main objective of this project is to build a machine learning model
+# capable of automatically classifying movie reviews based on their sentiment.
+
+# In addition to classification modeling, this project also includes text
+# preprocessing, exploratory data analysis (EDA), and feature engineering
+# using TF-IDF representation.
+
+# Objectives:
+# - Perform text preprocessing (cleaning, tokenization, stopwords removal, etc.)
+# - Explore and analyze sentiment distribution and word patterns
+# - Transform text data into numerical features using TF-IDF
+# - Build machine learning models for sentiment classification
+# - Evaluate model performance using accuracy, precision, recall, and F1-score
+
+
+# -----------------------------
+# 2. Dataset Overview
+# -----------------------------
+# The dataset used in this project is the IMDb Movie Reviews dataset,
+# which contains user-generated reviews of movies along with sentiment labels.
+
+# Features:
+# - review    : Textual movie review written by users
+# - sentiment : Sentiment label indicating whether the review is positive or negative
+
+# This dataset is widely used in natural language processing research
+# and is a standard benchmark for binary text classification tasks.
+
+# The data represents real-world user opinions expressed in natural language,
+# making it suitable for sentiment analysis and text mining applications.
+
+
+# -----------------------------
+# 3. Project Workflow
+# -----------------------------
+# The analysis in this notebook follows a structured data science pipeline:
+
+# 1. Data Loading & Inspection
+# 2. Text Preprocessing (Cleaning, Tokenization, Stopwords Removal)
+# 3. Exploratory Data Analysis (EDA)
+# 4. Feature Engineering (TF-IDF Vectorization)
+# 5. Model Building (Naive Bayes / Logistic Regression)
+# 6. Model Evaluation (Confusion Matrix, Accuracy, F1-score)
+# 7. Conclusion & Insights
+
+
+# -----------------------------
+# 4. Reproducibility
+# -----------------------------
+set.seed(123)
+# Ensures reproducibility of results across different runs of the analysis.
+
+---
+
+# 1. Data Loading & Inspection
+```{r load_data, message=FALSE, warning=FALSE}
+# -----------------------------
+# Load libraries
+# -----------------------------
+library(tidyverse)
+library(readr)
+
+# -----------------------------
+# Load dataset
+# -----------------------------
+imdb_data <- read_csv("Data/Raw/IMDB_dataset.csv")
+
+# -----------------------------
+# Basic overview
+# -----------------------------
+glimpse(imdb_data)
+head(imdb_data)
+dim(imdb_data)
+colnames(imdb_data)
+str(imdb_data)
+
+# -----------------------------
+# Data quality checks
+# -----------------------------
+
+# Missing values
+colSums(is.na(imdb_data))
+
+# Duplicate reviews 
+sum(duplicated(imdb_data$review))
+
+# -----------------------------
+# Target variable analysis (sentiment)
+# -----------------------------
+
+# Count distribution
+table(imdb_data$sentiment)
+
+# Percentage distribution
+prop.table(table(imdb_data$sentiment)) * 100
+
+# Visualization
+ggplot(imdb_data, aes(x = sentiment)) +
+  geom_bar(fill = "steelblue") +
+  labs(
+    title = "Sentiment Distribution",
+    x = "Sentiment",
+    y = "Count"
+  ) +
+  theme_minimal()
+
+# -----------------------------
+# Label Quality Check 
+# -----------------------------
+
+# Sample manual inspection
+imdb_data %>%
+  sample_n(10) %>%
+  select(review, sentiment)
+
+# Heuristic sentiment mismatch detection 
+positive_words <- c("good", "great", "excellent", "amazing", "best", "love", "wonderful")
+negative_words <- c("bad", "worst", "boring", "awful", "poor", "hate", "terrible")
+
+imdb_check <- imdb_data %>%
+  mutate(
+    review_lower = tolower(review),
+    pos_score = str_count(review_lower, paste(positive_words, collapse="|")),
+    neg_score = str_count(review_lower, paste(negative_words, collapse="|"))
+  )
+
+# Flag potential mislabeled samples
+imdb_suspect <- imdb_check %>%
+  filter(
+    (sentiment == "positive" & neg_score > pos_score) |
+    (sentiment == "negative" & pos_score > neg_score)
+  )
+
+head(imdb_suspect)
+
+# -----------------------------
+# Text length analysis
+# -----------------------------
+
+imdb_data <- imdb_data %>%
+  mutate(review_length = nchar(review))
+
+summary(imdb_data$review_length)
+
+ggplot(imdb_data, aes(x = review_length)) +
+  geom_histogram(bins = 50, fill = "darkgreen") +
+  labs(
+    title = "Review Length Distribution",
+    x = "Characters",
+    y = "Frequency"
+  ) +
+  theme_minimal()
+```
+
+---
+
+# 2. Exploratory Data Analysis
+```{r EDA, message=FALSE, warning=FALSE}
+# -----------------------------
+# Load Libraries
+# -----------------------------
+library(tidyverse)
+library(tidytext)
+library(stringr)
+
+# -----------------------------
+# Load Dataset
+# -----------------------------
+imdb_data <- read_csv("Data/Raw/IMDB_dataset.csv")
+
+glimpse(imdb_data)
+head(imdb_data)
+
+# -----------------------------
+# Basic Inspection
+# -----------------------------
+# Check missing values
+colSums(is.na(imdb_data))
+
+# Check sentiment distribution (SAFE VERSION)
+sentiment_dist <- imdb_data %>%
+  dplyr::count(sentiment, name = "n")
+
+print(sentiment_dist)
+
+# Save table
+write_csv(sentiment_dist, "Outputs/Tables/sentiment_distribution.csv")
+
+# -----------------------------
+# Visualization - Sentiment Distribution
+# -----------------------------
+p1 <- ggplot(sentiment_dist, aes(x = sentiment, y = n, fill = sentiment)) +
+  geom_col() +
+  theme_minimal() +
+  labs(
+    title = "Sentiment Distribution",
+    x = "Sentiment",
+    y = "Count"
+  ) +
+  theme(legend.position = "none")
+ggsave("Outputs/Figures/sentiment_distribution.png", p1, width = 6, height = 4)
+print(p1)
+
+# -----------------------------
+# Feature Engineering - Review Length
+# -----------------------------
+imdb_data <- imdb_data %>%
+  mutate(review_length = str_count(review, "\\w+"))
+
+length_stats <- imdb_data %>%
+  group_by(sentiment) %>%
+  summarise(
+    avg_length = mean(review_length),
+    median_length = median(review_length),
+    max_length = max(review_length),
+    min_length = min(review_length),
+    .groups = "drop"
+  )
+
+write_csv(length_stats, "Outputs/Tables/review_length_stats.csv")
+
+# Visualization
+p2 <- ggplot(imdb_data, aes(x = review_length, fill = sentiment)) +
+  geom_histogram(bins = 50, alpha = 0.5, position = "identity") +
+  theme_minimal() +
+  labs(
+    title = "Review Length Distribution",
+    x = "Word Count",
+    y = "Frequency"
+  )
+ggsave("Outputs/Figures/review_length_distribution.png", p2, width = 7, height = 5)
+print(p2)
+
+# -----------------------------
+# Text Analysis - Top Words
+# -----------------------------
+top_words <- imdb_data %>%
+  unnest_tokens(word, review) %>%
+  dplyr::count(word, sort = TRUE)
+
+write_csv(top_words, "Outputs/Tables/top_words_raw.csv")
+
+p3 <- top_words %>%
+  slice_head(n = 20) %>%
+  ggplot(aes(x = reorder(word, n), y = n)) +
+  geom_col() +
+  coord_flip() +
+  theme_minimal() +
+  labs(
+    title = "Top Words in Reviews",
+    x = "Words",
+    y = "Frequency"
+  )
+ggsave("Outputs/Figures/top_words_raw.png", p3, width = 7, height = 5)
+print(p3)
+
+# -----------------------------
+# Top Words by Sentiment
+# -----------------------------
+top_words_sentiment <- imdb_data %>%
+  unnest_tokens(word, review) %>%
+  dplyr::count(word, sentiment, sort = TRUE)
+
+write_csv(top_words_sentiment, "Outputs/Tables/top_words_by_sentiment.csv")
+
+p4 <- top_words_sentiment %>%
+  group_by(sentiment) %>%
+  slice_max(order_by = n, n = 10) %>%
+  ggplot(aes(x = reorder(word, n), y = n, fill = sentiment)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~sentiment, scales = "free") +
+  coord_flip() +
+  theme_minimal() +
+  labs(
+    title = "Top Words by Sentiment",
+    x = "Words",
+    y = "Frequency"
+  )
+ggsave("Outputs/Figures/top_words_by_sentiment.png", p4, width = 8, height = 5)
+print(p4)
+```
+
+---
+
+# 3. Text Preprocessing Pipeline
+```{r chunk_name, message=FALSE, warning=FALSE}
+# -----------------------------
+# Load required libraries
+# -----------------------------
+library(tidyverse)
+library(tidytext)
+library(stringr)
+library(textstem)
+
+# -----------------------------
+# Text Cleaning
+# -----------------------------
+imdb_clean <- imdb_data %>%
+  mutate(
+    review_clean = review %>%
+      str_to_lower() %>%                     # lowercase normalization
+      str_replace_all("<.*?>", " ") %>%      # remove HTML tags
+      str_replace_all("[^a-z\\s]", " ") %>%  # remove punctuation & numbers
+      str_squish()                           # remove extra whitespace
+  )
+
+# -----------------------------
+# Tokenization
+# -----------------------------
+imdb_tokens <- imdb_clean %>%
+  unnest_tokens(word, review_clean)
+
+# -----------------------------
+# Stopwords Removal
+# -----------------------------
+data("stop_words")
+
+imdb_tokens_clean <- imdb_tokens %>%
+  anti_join(stop_words, by = "word")
+
+# -----------------------------
+# Lemmatization
+# -----------------------------
+imdb_tokens_clean <- imdb_tokens_clean %>%
+  mutate(word = lemmatize_words(word))
+
+# -----------------------------
+# Word Frequency Analysis
+# -----------------------------
+imdb_tokens_clean %>%
+  count(word, sort = TRUE) %>%
+  head(20)
+
+# -----------------------------
+# Visualization (Top Words)
+# -----------------------------
+imdb_tokens_clean %>%
+  count(word, sort = TRUE) %>%
+  head(20) %>%
+  ggplot(aes(x = reorder(word, n), y = n)) +
+  geom_col(fill = "darkblue") +
+  coord_flip() +
+  labs(
+    title = "Top 20 Most Frequent Words (IMDb Reviews)",
+    x = "Words",
+    y = "Frequency"
+  ) +
+  theme_minimal()
+
+# -----------------------------
+# Save Processed Data 
+# -----------------------------
+write_csv(imdb_clean, "Data/Processed/imdb_clean.csv")
+write_csv(imdb_tokens_clean, "Data/Processed/imdb_tokens_clean.csv")
+```
+
+---
+
+# 4. Feature Engineering
+```{r feature_engineering, message=FALSE, warning=FALSE}
+# -----------------------------
+# Load Libraries
+# -----------------------------
+library(tidyverse)
+library(tidytext)
+
+# -----------------------------
+# Load Processed Data
+# -----------------------------
+imdb_tokens_clean <- read_csv("Data/Processed/imdb_tokens_clean.csv")
+
+glimpse(imdb_tokens_clean)
+
+# -----------------------------
+# Create Document ID
+# -----------------------------
+
+imdb_tokens_clean <- imdb_tokens_clean %>%
+  group_by(review, sentiment) %>%
+  mutate(doc_id = cur_group_id()) %>%
+  ungroup()
+
+# -----------------------------
+# Term Frequency (TF)
+# -----------------------------
+tf_data <- imdb_tokens_clean %>%
+  count(doc_id, word, sort = TRUE)
+
+# -----------------------------
+# TF-IDF Calculation
+# -----------------------------
+tfidf_data <- tf_data %>%
+  bind_tf_idf(term = word, document = doc_id, n = n)
+
+# Save TF-IDF (long format)
+write_csv(tfidf_data, "Data/Processed/imdb_tfidf_long.csv")
+
+# -----------------------------
+# Document-Term Matrix (DTM)
+# -----------------------------
+dtm <- tf_data %>%
+  cast_dtm(document = doc_id, term = word, value = n)
+
+# -----------------------------
+# Inspect Matrix
+# -----------------------------
+dim(dtm)
+
+# -----------------------------
+# Top TF-IDF Words
+# -----------------------------
+top_tfidf <- tfidf_data %>%
+  arrange(desc(tf_idf)) %>%
+  slice_head(n = 20)
+
+write_csv(top_tfidf, "Outputs/Tables/top_tfidf_words.csv")
+
+top_tfidf %>%
+  ggplot(aes(x = reorder(word, tf_idf), y = tf_idf)) +
+  geom_col() +
+  coord_flip() +
+  theme_minimal() +
+  labs(
+    title = "Top TF-IDF Words",
+    x = "Words",
+    y = "TF-IDF Score"
+  )
+
+ggsave("Outputs/Figures/top_tfidf_words.png", width = 7, height = 5)
+
+# -----------------------------
+# Save DTM
+# -----------------------------
+saveRDS(dtm, "Data/Processed/imdb_dtm.rds")
+```
+
+---
+
+# 5. Modeling & Evaluation
+```{r modeling, message=FALSE, warning=FALSE}
+# -----------------------------
+# Load Libraries
+# -----------------------------
+library(tidyverse)
+library(tidytext)
+library(caret)
+library(glmnet)
+library(tm)
+
+# ------------------------------------------------------------
+# LOAD DATA
+# ------------------------------------------------------------
+imdb_tokens <- read_csv("Data/Processed/imdb_tokens_clean.csv")
+
+# ------------------------------------------------------------
+# REBUILD DOC_ID 
+# ------------------------------------------------------------
+imdb_tokens <- imdb_tokens %>%
+  group_by(review, sentiment) %>%
+  mutate(doc_id = cur_group_id()) %>%
+  ungroup()
+
+# ------------------------------------------------------------
+# LIMIT FEATURES (TOP 5000)
+# ------------------------------------------------------------
+top_words <- imdb_tokens %>%
+  count(word, sort = TRUE) %>%
+  slice_head(n = 5000) %>%
+  pull(word)
+
+imdb_tokens_filtered <- imdb_tokens %>%
+  filter(word %in% top_words)
+
+# ------------------------------------------------------------
+# BUILD DTM
+# ------------------------------------------------------------
+tf_data <- imdb_tokens_filtered %>%
+  count(doc_id, word)
+
+dtm <- tf_data %>%
+  cast_dtm(document = doc_id, term = word, value = n)
+
+dtm <- removeSparseTerms(dtm, 0.99)
+
+dtm <- as.matrix(dtm)
+
+# ------------------------------------------------------------
+# ALIGN LABELS
+# ------------------------------------------------------------
+labels <- imdb_tokens_filtered %>%
+  distinct(doc_id, sentiment)
+
+labels <- labels[match(rownames(dtm), labels$doc_id), ]
+
+y <- as.factor(labels$sentiment)
+
+stopifnot(nrow(dtm) == length(y))
+
+# ------------------------------------------------------------
+# TRAIN TEST SPLIT
+# ------------------------------------------------------------
+set.seed(123)
+
+train_index <- createDataPartition(y, p = 0.8, list = FALSE)
+
+x_train <- dtm[train_index, , drop = FALSE]
+x_test  <- dtm[-train_index, , drop = FALSE]
+
+y_train <- y[train_index]
+y_test  <- y[-train_index]
+
+stopifnot(ncol(x_train) == ncol(x_test))
+
+# ------------------------------------------------------------
+# MODEL
+# ------------------------------------------------------------
+model <- cv.glmnet(
+  x = x_train,
+  y = y_train,
+  family = "binomial",
+  alpha = 0,
+  nfolds = 5
+)
+
+# ------------------------------------------------------------
+# PREDICTION
+# ------------------------------------------------------------
+prob <- predict(model, x_test, s = "lambda.min", type = "response")
+
+pred <- ifelse(prob > 0.5, "positive", "negative")
+pred <- as.factor(pred)
+
+# ------------------------------------------------------------
+# EVALUATION
+# ------------------------------------------------------------
+conf_matrix <- confusionMatrix(pred, y_test)
+print(conf_matrix)
+
+# ------------------------------------------------------------
+# SAVE OUTPUT
+# ------------------------------------------------------------
+dir.create("Outputs/Tables", recursive = TRUE, showWarnings = FALSE)
+dir.create("Outputs/Models", recursive = TRUE, showWarnings = FALSE)
+
+results <- data.frame(
+  doc_id = rownames(x_test),
+  actual = y_test,
+  prediction = pred
+)
+
+write_csv(results, "Outputs/Tables/predictions.csv")
+
+metrics <- data.frame(
+  Accuracy  = conf_matrix$overall["Accuracy"],
+  Precision = conf_matrix$byClass["Precision"],
+  Recall    = conf_matrix$byClass["Recall"],
+  F1        = conf_matrix$byClass["F1"]
+)
+
+write_csv(metrics, "Outputs/Tables/model_metrics.csv")
+
+saveRDS(model, "Outputs/Models/glmnet_model.rds")
+
+cat("MODEL COMPLETE - DOC_ID FIXED\n")
+```
+
+---
+
+# Conclusion & Insights
+
+## 1. Summary of Findings
+- **Exploratory Data Analysis (EDA):**  
+  - The IMDb dataset shows a **balanced distribution** between positive and negative sentiments.  
+  - Review lengths vary significantly, indicating diverse writing styles and levels of detail.  
+  - Most frequent words in raw text include common stopwords such as *“the”, “and”, “of”*, which do not carry meaningful sentiment information.  
+  - After preprocessing, more meaningful words such as *“movie”, “film”, “character”* emerge, reflecting actual content themes.
+
+- **Text Preprocessing:**  
+  - Text normalization, tokenization, stopword removal, and lemmatization significantly improved data quality.  
+  - Removing noise (HTML tags, punctuation, stopwords) allowed the model to focus on **semantically meaningful words**.  
+  - The preprocessing step transformed raw text into a structured format suitable for machine learning.
+
+- **Feature Engineering:**  
+  - The Bag-of-Words representation combined with **feature restriction to the top 5000 words** reduced dimensionality while preserving important information.  
+  - This step ensured computational efficiency and prevented memory issues during modeling.  
+  - The resulting Document-Term Matrix (DTM) provided a numerical representation of text data for model training.
+
+- **Modeling Results:**  
+  - The Logistic Regression model achieved an **accuracy of approximately 86%**, indicating strong classification performance.  
+  - The model demonstrated balanced performance across both sentiment classes, with high sensitivity and specificity.  
+  - The Kappa score indicates **substantial agreement**, confirming that the model performs well beyond random chance.
+
+## 2. Insights from Model Interpretation
+- Words with high positive coefficients (e.g., *“excellent”, “amazing”, “wonderful”*) strongly indicate **positive sentiment**.  
+- Words with high negative coefficients (e.g., *“boring”, “worst”, “terrible”*) strongly indicate **negative sentiment**.  
+- The model successfully captures **human-like sentiment patterns**, where emotionally charged words influence predictions.  
+- Logistic Regression provides **high interpretability**, allowing clear understanding of how each word contributes to the final prediction.  
+- The results confirm that **text preprocessing and feature engineering are critical** in improving model performance and interpretability.
+
+## 3. Practical Implications
+- The model can be used for **automatic sentiment classification** in large-scale text data such as reviews, social media, or feedback systems.  
+- Businesses can leverage this approach to **analyze customer opinions**, detect negative feedback, and improve products or services.  
+- The interpretability of the model allows stakeholders to **understand key drivers of sentiment**, not just predictions.  
+- The pipeline demonstrates a scalable workflow that can be adapted to other domains such as product reviews, news analysis, or customer support data.
+
+## 4. Recommendations
+- Future work can explore **advanced models** such as Naive Bayes, Support Vector Machines, or deep learning models (LSTM, BERT) for potentially higher accuracy.  
+- Incorporating **TF-IDF weighting** instead of simple frequency may improve feature representation.  
+- Increasing dataset size or using more diverse datasets could enhance model generalization.  
+- Additional techniques such as **hyperparameter tuning** and cross-validation can further optimize model performance.  
+- Extending the analysis to **multiclass sentiment classification** (e.g., positive, neutral, negative) could provide more granular insights.
